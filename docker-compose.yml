@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # 1. 데이터베이스 서비스 (MySQL)
+  db:
+    image: mysql:8.0
+    container_name: mediskin_mysql
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:3307"
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/conf.d/my.cnf:/etc/mysql/conf.d/my.cnf
+    networks:
+      - mediskin_network
+
+  # 2. 백엔드 API 서비스 (FastAPI)
+  backend:
+    build: .
+    container_name: mediskin_backend
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    networks:
+      - mediskin_network
+
+# 컨테이너끼리 서로 이름을 불러서 통신할 수 있게 해주는 전용 망
+networks:
+  mediskin_network:
+    driver: bridge
