@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from .database import engine, get_db
 from . import models, schemas, utils
+from app.models import User
+
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
@@ -61,4 +63,32 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
         "user_id": user.id,
         "name": user.name
     }
+
+@app.delete("/withdraw/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def withdraw_user(user_id: int, db: Session = Depends(get_db)):
+    """
+    특정 ID를 가진 사용자를 삭제(탈퇴)합니다.
+    """
+    # DB에서 해당 사용자 찾기
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    # 없으면 404 에러
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="해당 사용자를 찾을 수 없습니다."
+        )
+
+    # 삭제 진행
+    try:
+        db.delete(user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="탈퇴 처리 중 오류가 발생했습니다."
+        )
+    
+    return None
 
