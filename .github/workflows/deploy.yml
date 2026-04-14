@@ -17,6 +17,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd backend
-            git pull origin main
+            git fetch --all
+            git reset --hard origin/main  
             docker compose up --build -d
             
