@@ -5,6 +5,7 @@ from . import models, schemas, utils
 from .models import User
 from .auth import get_current_user
 from . import auth
+from fastapi import Response
 
 
 # FastAPI 인스턴스 생성
@@ -65,24 +66,18 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     }
 
 # 회원 탈퇴
-@app.delete("/withdraw/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def withdraw_user(user_id: int, db: Session = Depends(get_db)):
+@app.delete("/withdraw", status_code=status.HTTP_204_NO_CONTENT)
+def withdraw_user(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(auth.get_current_user) # 토큰에서 현재 유저 가져오기
+):
     """
-    특정 ID를 가진 사용자를 삭제(탈퇴)합니다.
+    현재 로그인된 사용자를 탈퇴 처리합니다.
     """
-    # DB에서 해당 사용자 찾기
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    # 없으면 404 에러
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="해당 사용자를 찾을 수 없습니다."
-        )
 
     # 삭제 진행
     try:
-        db.delete(user)
+        db.delete(current_user)
         db.commit()
     except Exception as e:
         db.rollback()
