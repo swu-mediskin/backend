@@ -1,11 +1,16 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, OperationalError
+from jose import JWTError
 from .database import engine, get_db
 from . import models, schemas, utils
 from .models import User
 from .auth import get_current_user
 from . import auth
 from fastapi import Response
+import logging
 
 
 # FastAPI 인스턴스 생성
@@ -13,6 +18,69 @@ app = FastAPI()
 
 # 서버 시작 시 테이블 생성
 models.Base.metadata.create_all(bind=engine)
+
+# 로깅 설정
+logger = logging.getLogger("uvicorn.error")
+
+
+# 일관된 HTTPException 핸들러
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # 인증/권한 관련 응답은 일관된 JSON 구조와 WWW-Authenticate 헤더 유지
+    content = {"error": exc.detail}
+    headers = getattr(exc, "headers", None)
+    if headers:
+        return JSONResponse(status_code=exc.status_code, content=content, headers=headers)
+    return JSONResponse(status_code=exc.status_code, content=content)
+
+
+# 요청 유효성 에러 핸들러
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning("Request validation error: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"error": "요청 데이터 유효성 검사 실패", "details": exc.errors()},
+    )
+
+
+@app.exception_handler(JWTError)
+async def jwt_error_handler(request: Request, exc: JWTError):
+    logger.warning("JWTError: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"error": "토큰이 유효하지 않습니다."},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+# SQLAlchemy 무결성/운영 오류 처리
+@app.exception_handler(IntegrityError)
+async def sqlalchemy_integrity_error_handler(request: Request, exc: IntegrityError):
+    logger.exception("Database integrity error")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"error": "데이터베이스 무결성 오류", "detail": str(exc.orig) if hasattr(exc, 'orig') else str(exc)},
+    )
+
+
+@app.exception_handler(OperationalError)
+async def sqlalchemy_operational_error_handler(request: Request, exc: OperationalError):
+    logger.exception("Database operational error")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": "데이터베이스 연결 또는 운영 오류가 발생했습니다."},
+    )
+
+
+# 일반 예외 처리 (최후의 수단)
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": "서버 내부 오류가 발생했습니다."},
+    )
 
 # 루트 엔트포인트 정의
 @app.get("/")
@@ -41,10 +109,19 @@ def signup(user: schemas.UserCreate, db: Session = Depends(get_db)):
         gender=user.gender
     )
 
-    # DB에 저장
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    # DB에 저장 (무결성 오류 등 예외 처리)
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+    except IntegrityError as ie:
+        db.rollback()
+        logger.exception("IntegrityError during signup")
+        raise HTTPException(status_code=400, detail="이미 존재하는 데이터가 있습니다. 이메일을 확인해주세요.")
+    except Exception as e:
+        db.rollback()
+        logger.exception("Unexpected error during signup: %s", e)
+        raise HTTPException(status_code=500, detail="회원가입 처리 중 서버 오류가 발생했습니다.")
 
     return new_user
 

@@ -10,7 +10,7 @@ class UserBase(BaseModel):
 # 회원가입할 때 서버로 보낼 데이터
 class UserCreate(BaseModel):
     email: EmailStr   # 이메일 형식 검증
-    password: str     # 비밀번호
+    password: str= Field(..., description="비밀번호", example="password123")     # 비밀번호
     name: str         # 이름
     birth_year: int = Field(..., description="출생 연도", example=2003)   # 생년
     gender: str = Field(    # 성별
@@ -43,4 +43,4 @@ class UserUpdate(BaseModel):
     name: Optional[str] = None
     birth_year: Optional[int] = Field(None, description="수정할 출생 연도", example=2003)
     gender: Optional[str] = Field(None, description="수정할 성별", pattern="^(M|F)$", example="F")
-    password: Optional[str] = None
+    password: Optional[str] = Field(None, description="수정할 비밀번호", example="newpassword123")
