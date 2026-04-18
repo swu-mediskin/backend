@@ -2,7 +2,9 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from .database import engine, get_db
 from . import models, schemas, utils
-from app.models import User
+from .models import User
+from .auth import get_current_user
+from . import auth
 
 
 # FastAPI 인스턴스 생성
@@ -16,6 +18,7 @@ models.Base.metadata.create_all(bind=engine)
 async def read_root():
     return {"message": "Hello, World!"}
 
+# 회원가입
 @app.post("/signup", response_model=schemas.UserCreate)
 def signup(user: schemas.UserCreate, db: Session = Depends(get_db)):
     # 이메일 중복 확인
@@ -44,26 +47,24 @@ def signup(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
     return new_user
 
-@app.post("/login", response_model=schemas.Token)
+# 로그인
+@app.post("/login")
 def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
-    # 이메일로 사용자 찾기
     user = db.query(models.User).filter(models.User.email == user_credentials.email).first()
     
-    # 사용자가 없거나 비밀번호가 틀리면 에러 던지기
-    if not user:
-        raise HTTPException(status_code=403, detail="이메일이 존재하지 않습니다.")
-    
-    # utils.verify_password(입력비번, DB저장비번)
-    if not utils.verify_password(user_credentials.password, user.password):
-        raise HTTPException(status_code=403, detail="비밀번호가 틀렸습니다.")
+    if not user or not utils.verify_password(user_credentials.password, user.password):
+        raise HTTPException(status_code=403, detail="이메일 또는 비밀번호가 틀렸습니다.")
 
-    # 로그인 성공 응답
+    # Access Token 생성 (유저 ID를 문자열로 담아)
+    access_token = auth.create_access_token(data={"sub": str(user.id)})
+
     return {
-        "message": "로그인 성공!",
-        "user_id": user.id,
+        "access_token": access_token,
+        "token_type": "bearer",
         "name": user.name
     }
 
+# 회원 탈퇴
 @app.delete("/withdraw/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def withdraw_user(user_id: int, db: Session = Depends(get_db)):
     """
@@ -92,3 +93,33 @@ def withdraw_user(user_id: int, db: Session = Depends(get_db)):
     
     return None
 
+# 내 정보 조회
+@app.get("/users/me", response_model=schemas.UserResponse)
+def read_user_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
+
+# 특정 사용자 ID로 정보 조회
+@app.get("/users/{user_id}", response_model=schemas.UserResponse)
+def get_user_profile(user_id: int, db: Session = Depends(get_db)):
+    # DB에서 해당 ID의 유저 검색
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    
+    # 유저가 없으면 404 에러
+    if not user:
+        raise HTTPException(status_code=404, detail="해당 사용자를 찾을 수 없습니다.")
+    
+    return user
+
+# 내 정보 수정 API
+@app.patch("/users/me", response_model=schemas.UserResponse)
+def update_my_info(
+    updated_data: schemas.UserUpdate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    for key, value in updated_data.model_dump(exclude_unset=True).items():
+        setattr(current_user, key, value)
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user

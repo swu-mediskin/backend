@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 class UserBase(BaseModel):
@@ -12,8 +12,13 @@ class UserCreate(BaseModel):
     email: EmailStr   # 이메일 형식 검증
     password: str     # 비밀번호
     name: str         # 이름
-    birth_year: int   # 생년
-    gender: str       # 성별
+    birth_year: int = Field(..., description="출생 연도", example=2003)   # 생년
+    gender: str = Field(    # 성별
+        ..., 
+        description="성별 (M: 남성, F: 여성)", 
+        pattern="^(M|F)$",
+        example="F"
+    )
 
 # 회원가입 성공 시 돌려줄 응답
 class UserResponse(UserBase):
@@ -32,3 +37,10 @@ class Token(BaseModel):
     message: str
     user_id: int
     name: str
+
+# 정보 수정
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    birth_year: Optional[int] = Field(None, description="수정할 출생 연도", example=2003)
+    gender: Optional[str] = Field(None, description="수정할 성별", pattern="^(M|F)$", example="F")
+    password: Optional[str] = None
