@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, Date, DateTime, 
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
@@ -36,12 +37,11 @@ class Diagnosis(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     image_path = Column(String(500))
-    region = Column(String(100)) # SQL의 enum 대응
+    region = Column(String(100)) 
     created_at = Column(Date)
 
     user = relationship("User", back_populates="diagnoses")
     analysis_result = relationship("AIAnalysisResult", back_populates="diagnosis", uselist=False)
-    # 예약어 metadata 대신 user_metadata 사용
     user_metadata = relationship("UserMetadata", back_populates="diagnosis", uselist=False)
 
 class AIAnalysisResult(Base):
@@ -50,7 +50,7 @@ class AIAnalysisResult(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     disease_id = Column(Integer, ForeignKey("diseases.id"), nullable=False)
     diagnosis_id = Column(Integer, ForeignKey("diagnoses.id"), nullable=False)
-    classification_class = Column(String(100)) # SQL의 enum 대응
+    classification_class = Column(String(100)) 
     probability = Column(Float)
     medgemma_report = Column(Text)
     risk_signs_description = Column(Text)
@@ -65,7 +65,6 @@ class UserMetadata(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     diagnosis_id = Column(Integer, ForeignKey("diagnoses.id"), nullable=False)
     
-    # SQL 파일의 타입(boolean, enum 등) 반영
     smoke = Column(Boolean)
     drink = Column(Boolean)
     background_father = Column(Boolean)
@@ -91,3 +90,11 @@ class UserMetadata(Base):
     biopsed = Column(Boolean) # 생검 여부
 
     diagnosis = relationship("Diagnosis", back_populates="user_metadata")
+
+class SkinImage(Base):
+    __tablename__ = "skin_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))  
+    file_path = Column(String(255))                    
+    created_at = Column(DateTime, default=datetime.utcnow) 

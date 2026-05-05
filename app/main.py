@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, File, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -11,16 +11,32 @@ from .auth import get_current_user
 from . import auth
 from fastapi import Response
 import logging
+import shutil
+import os
+from uuid import uuid4
 
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
+
+# 이미지가 저장될 경로 설정
+UPLOAD_DIR = "static/uploads"
+
+# 폴더 없으면 자동 생성
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+from fastapi.staticfiles import StaticFiles
+
+# http://아이피:8080/static/uploads/파일명 으로 접근
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 서버 시작 시 테이블 생성
 models.Base.metadata.create_all(bind=engine)
 
 # 로깅 설정
 logger = logging.getLogger("uvicorn.error")
+
 
 
 # 일관된 HTTPException 핸들러
@@ -73,7 +89,7 @@ async def sqlalchemy_operational_error_handler(request: Request, exc: Operationa
     )
 
 
-# 일반 예외 처리 (최후의 수단)
+# 일반 예외 처리
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception: %s", exc)
@@ -81,11 +97,6 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": "서버 내부 오류가 발생했습니다."},
     )
-
-# 루트 엔트포인트 정의
-@app.get("/")
-async def read_root():
-    return {"message": "Hello, World!"}
 
 # 회원가입
 @app.post("/signup", response_model=schemas.UserCreate)
@@ -195,3 +206,46 @@ def update_my_info(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+# 이미지 업로드
+@app.post("/upload-skin", status_code=status.HTTP_201_CREATED)
+async def upload_skin_image(
+    file: UploadFile = File(...), 
+    current_user: models.User = Depends(auth.get_current_user), # 로그인한 사람만 업로드 가능
+    db: Session = Depends(get_db)
+):
+    """
+    카메라로 찍은 사진을 서버에 저장합니다.
+    """
+    # 1. 파일 확장자 체크 (이미지 파일만 허용)
+    extension = file.filename.split(".")[-1].lower()
+    if extension not in ["jpg", "jpeg", "png"]:
+        raise HTTPException(status_code=400, detail="이미지 파일(jpg, png)만 업로드 가능합니다.")
+
+    # 2. 파일 이름 고유화 (소윤.jpg -> f47ac10b-....jpg)
+    # 똑같은 이름으로 올리면 덮어씌워지니까 고유한 ID를 붙여주는 게 안전해!
+    filename = f"{uuid4()}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    # 3. 파일 실제 저장
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+            new_image = models.SkinImage(
+                user_id=current_user.id,
+                file_path=file_path
+            )
+            db.add(new_image)
+            db.commit()
+            db.refresh(new_image)
+    except Exception as e:
+        logger.exception("파일 저장 중 오류 발생")
+        raise HTTPException(status_code=500, detail="이미지 저장에 실패했습니다.")
+
+    # 4. 나중에 AI 모델에 넣거나 DB에 저장할 수 있도록 저장된 경로 반환
+    return {
+        "message": "이미지 업로드 성공",
+        "file_path": file_path,
+        "user_email": current_user.email
+    }

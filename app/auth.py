@@ -23,7 +23,7 @@ def create_access_token(data: dict):
 
 # 토큰 검증 및 현재 유저 가져오기 (인가 미들웨어)
 def get_current_user(
-    auth: HTTPAuthorizationCredentials = Depends(security), # 여기 변경!
+    auth: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(database.get_db)
 ):
     credentials_exception = HTTPException(
