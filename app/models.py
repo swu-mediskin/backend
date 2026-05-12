@@ -67,19 +67,15 @@ class UserMetadata(Base):
     
     smoke = Column(Boolean)
     drink = Column(Boolean)
-    background_father = Column(Boolean)
-    background_mother = Column(Boolean)
     age = Column(Integer)
     pesticide = Column(Boolean)
     gender = Column(String(50)) # enum
     skin_cancer_history = Column(Boolean)
     cancer_history= Column(Boolean)
-    has_piped_water = Column(Boolean)
-    has_sewage_system = Column(Boolean)
-    fitspatrick = Column(String(50)) # enum
+    fitspatrick = Column(Float)
     region = Column(String(100)) # enum
-    diameter_1 = Column(Boolean)
-    diameter_2 = Column(Boolean)
+    diameter_1 = Column(Float)
+    diameter_2 = Column(Float)
     diagnostic = Column(String(100)) # enum
     itch = Column(Boolean)
     grew = Column(Boolean)
