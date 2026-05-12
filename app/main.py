@@ -322,7 +322,7 @@ async def upload_skin_and_diagnose(
 
     # AI 서버 호출 및 결과 받기
     try:
-        AI_SERVER_URL = "http://3.37.47.74/:8000/predict" 
+        AI_SERVER_URL = "http://3.37.47.74:8080/predict" 
         with open(file_path, "rb") as f:
             response = requests.post(
                 AI_SERVER_URL, 
