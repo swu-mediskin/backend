@@ -14,6 +14,7 @@ import logging
 import shutil
 import os
 from uuid import uuid4
+import requests
 
 
 # FastAPI 인스턴스 생성
