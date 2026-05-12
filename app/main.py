@@ -217,17 +217,16 @@ async def upload_skin_image(
     """
     카메라로 찍은 사진을 서버에 저장합니다.
     """
-    # 1. 파일 확장자 체크 (이미지 파일만 허용)
+    # 파일 확장자 체크 
     extension = file.filename.split(".")[-1].lower()
     if extension not in ["jpg", "jpeg", "png"]:
         raise HTTPException(status_code=400, detail="이미지 파일(jpg, png)만 업로드 가능합니다.")
 
-    # 2. 파일 이름 고유화 (소윤.jpg -> f47ac10b-....jpg)
-    # 똑같은 이름으로 올리면 덮어씌워지니까 고유한 ID를 붙여주는 게 안전해!
+    # 파일 이름 고유화
     filename = f"{uuid4()}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
 
-    # 3. 파일 실제 저장
+    # 파일 실제 저장
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -243,9 +242,104 @@ async def upload_skin_image(
         logger.exception("파일 저장 중 오류 발생")
         raise HTTPException(status_code=500, detail="이미지 저장에 실패했습니다.")
 
-    # 4. 나중에 AI 모델에 넣거나 DB에 저장할 수 있도록 저장된 경로 반환
     return {
         "message": "이미지 업로드 성공",
         "file_path": file_path,
         "user_email": current_user.email
     }
+
+# 이미지 + 메타데이터 업로드
+@app.post("/upload-skin", status_code=status.HTTP_201_CREATED)
+async def upload_skin_and_diagnose(
+    file: UploadFile = File(...), 
+    
+    age: int = 0,
+    gender: str = "MALE",
+    region: str = "FACE",
+    smoke: bool = False,
+    drink: bool = False,
+    pesticide: bool = False,
+    skin_cancer_history: bool = False,
+    cancer_history: bool = False,
+    fitspatrick: str = "1",
+    diameter_1: float = 0.0,
+    diameter_2: float = 0.0,
+    itch: bool = False,
+    grew: bool = False,
+    hurt: bool = False,
+    changed: bool = False,
+    bleed: bool = False,
+    elevation: bool = False,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 이미지 저장 로직
+    filename = f"{uuid4()}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 진단 기록 생성 (Diagnosis 테이블)
+    new_diagnosis = models.Diagnosis(user_id=current_user.id, image_path=file_path)
+    db.add(new_diagnosis)
+    db.commit()
+    db.refresh(new_diagnosis)
+
+    # 사용자 메타데이터 저장 (UserMetadata 테이블)
+    new_metadata = models.UserMetadata(
+        diagnosis_id=new_diagnosis.id,
+        age=age, gender=gender, region=region, smoke=smoke, drink=drink,
+        pesticide=pesticide, skin_cancer_history=skin_cancer_history,
+        cancer_history=cancer_history, fitspatrick=fitspatrick,
+        diameter_1=diameter_1, diameter_2=diameter_2,
+        itch=itch, grew=grew, hurt=hurt, changed=changed,
+        bleed=bleed, elevation=elevation
+    )
+    db.add(new_metadata)
+    db.commit()
+
+    # 데이터 가공
+    ai_meta_data = {
+        "age": str(age),
+        "gender": gender.upper(),
+        "region": region.upper(),
+        "smoke": "YES" if smoke else "NO",
+        "drink": "YES" if drink else "NO",
+        "pesticide": "YES" if pesticide else "NO",
+        "skin_cancer_history": "YES" if skin_cancer_history else "NO",
+        "cancer_history": "YES" if cancer_history else "NO",
+        "itch": "YES" if itch else "NO",
+        "grew": "YES" if grew else "NO",
+        "hurt": "YES" if hurt else "NO",
+        "changed": "YES" if changed else "NO",
+        "bleed": "YES" if bleed else "NO",
+        "elevation": "YES" if elevation else "NO",
+        "fitspatrick": str(fitspatrick),
+        "diameter_1": str(diameter_1),
+        "diameter_2": str(diameter_2)
+    }
+
+    # AI 서버 호출 및 결과 받기
+    try:
+        AI_SERVER_URL = "http://3.37.47.74/:8000/predict" 
+        with open(file_path, "rb") as f:
+            response = requests.post(
+                AI_SERVER_URL, 
+                data=ai_meta_data, 
+                files={"file": (filename, f, file.content_type)}
+            )
+        
+        ai_result = response.json()
+        
+        # DB에 분석 결과 업데이트
+        new_diagnosis.result_class = ai_result.get("predicted_class")
+        new_diagnosis.result_prob = ai_result.get("probability")
+        db.commit()
+
+        return {
+            "message": "분석 완료",
+            "diagnosis_id": new_diagnosis.id,
+            "result": ai_result
+        }
+    except Exception as e:
+        return {"error": "AI 서버 연결 실패", "details": str(e)}
