@@ -208,7 +208,7 @@ def update_my_info(
     return current_user
 
 # 이미지 업로드
-@app.post("/upload-skin", status_code=status.HTTP_201_CREATED)
+@app.post("/upload-skin-image", status_code=status.HTTP_201_CREATED)
 async def upload_skin_image(
     file: UploadFile = File(...), 
     current_user: models.User = Depends(auth.get_current_user), # 로그인한 사람만 업로드 가능
