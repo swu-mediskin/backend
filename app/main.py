@@ -208,6 +208,58 @@ def update_my_info(
     db.refresh(current_user)
     return current_user
 
+# 회원 가입 시 받는 메타데이터
+@app.post("/user/metadata/basic", status_code=status.HTTP_201_CREATED)
+async def save_basic_metadata(
+    smoke: bool = False,
+    drink: bool = False,
+    pesticide: bool = False,
+    skin_cancer_history: bool = False,
+    cancer_history: bool = False,
+    fitspatrick: str = "1",
+    
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    existing_metadata = db.query(models.UserMetadata).filter(
+        models.UserMetadata.diagnosis_id == None, 
+        models.UserMetadata.gender == current_user.gender
+    ).first()
+    
+    if existing_metadata:
+        # 기존 임시 데이터가 있다면 업데이트
+        existing_metadata.smoke = smoke
+        existing_metadata.drink = drink
+        existing_metadata.pesticide = pesticide
+        existing_metadata.skin_cancer_history = skin_cancer_history
+        existing_metadata.cancer_history = cancer_history
+        existing_metadata.fitspatrick = fitspatrick
+        new_metadata = existing_metadata
+    else:
+        # 없다면 새로 한 줄 생성
+        new_metadata = models.UserMetadata(
+            diagnosis_id=None,
+            age=0, 
+            gender=getattr(current_user, "gender", "MALE"),
+            region="FACE",
+            smoke=smoke,
+            drink=drink,
+            pesticide=pesticide,
+            skin_cancer_history=skin_cancer_history,
+            cancer_history=cancer_history,
+            fitspatrick=fitspatrick
+        )
+        db.add(new_metadata)
+        
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("기본 정보 저장 중 에러 발생")
+        raise HTTPException(status_code=500, detail=f"저장 실패: {str(e)}")
+        
+    return {"message": "기본 정보 저장 완료"}
+
 # 이미지 업로드
 @app.post("/upload-skin-image", status_code=status.HTTP_201_CREATED)
 async def upload_skin_image(
@@ -255,14 +307,7 @@ async def upload_skin_and_diagnose(
     file: UploadFile = File(...), 
     
     age: int = 0,
-    gender: str = "MALE",
     region: str = "FACE",
-    smoke: bool = False,
-    drink: bool = False,
-    pesticide: bool = False,
-    skin_cancer_history: bool = False,
-    cancer_history: bool = False,
-    fitspatrick: str = "1",
     diameter_1: float = 0.0,
     diameter_2: float = 0.0,
     itch: bool = False,
@@ -271,6 +316,7 @@ async def upload_skin_and_diagnose(
     changed: bool = False,
     bleed: bool = False,
     elevation: bool = False,
+
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -286,13 +332,32 @@ async def upload_skin_and_diagnose(
     db.commit()
     db.refresh(new_diagnosis)
 
+    user_basic_info = db.query(models.UserMetadata).filter(
+        models.UserMetadata.diagnosis_id == None,
+        models.UserMetadata.gender == current_user.gender  
+    ).order_by(models.UserMetadata.id.desc()).first()
+
+    smoke = user_basic_info.smoke if user_basic_info else False
+    drink = user_basic_info.drink if user_basic_info else False
+    pesticide = user_basic_info.pesticide if user_basic_info else False
+    skin_cancer_history = user_basic_info.skin_cancer_history if user_basic_info else False
+    cancer_history = user_basic_info.cancer_history if user_basic_info else False
+    fitspatrick = user_basic_info.fitspatrick if user_basic_info else "1"
+
     # 사용자 메타데이터 저장 (UserMetadata 테이블)
     new_metadata = models.UserMetadata(
         diagnosis_id=new_diagnosis.id,
-        age=age, gender=gender, region=region, smoke=smoke, drink=drink,
-        pesticide=pesticide, skin_cancer_history=skin_cancer_history,
-        cancer_history=cancer_history, fitspatrick=fitspatrick,
-        diameter_1=diameter_1, diameter_2=diameter_2,
+        age=age, 
+        gender=getattr(current_user, "gender", "MALE"), 
+        region=region, 
+        smoke=smoke, 
+        drink=drink,
+        pesticide=pesticide, 
+        skin_cancer_history=skin_cancer_history,
+        cancer_history=cancer_history, 
+        fitspatrick=fitspatrick,
+        diameter_1=diameter_1, 
+        diameter_2=diameter_2,
         itch=itch, grew=grew, hurt=hurt, changed=changed,
         bleed=bleed, elevation=elevation
     )
@@ -302,7 +367,7 @@ async def upload_skin_and_diagnose(
     # 데이터 가공
     ai_meta_data = {
         "age": str(age),
-        "gender": gender.upper(),
+        "gender": getattr(current_user, "gender", "MALE").upper(),
         "region": region.upper(),
         "smoke": "YES" if smoke else "NO",
         "drink": "YES" if drink else "NO",

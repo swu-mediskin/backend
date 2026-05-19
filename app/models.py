@@ -63,7 +63,7 @@ class UserMetadata(Base):
     __tablename__ = "user_metadata"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    diagnosis_id = Column(Integer, ForeignKey("diagnoses.id"), nullable=False)
+    diagnosis_id = Column(Integer, ForeignKey("diagnoses.id"), nullable=True)
     
     smoke = Column(Boolean)
     drink = Column(Boolean)
