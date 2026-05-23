@@ -15,6 +15,7 @@ import shutil
 import os
 from uuid import uuid4
 import requests
+from datetime import datetime
 
 
 # FastAPI 인스턴스 생성
@@ -221,25 +222,28 @@ async def save_basic_metadata(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    # 🌟 나이 자동 계산: 현재 연도 - 유저의 출생 연도
+    current_year = datetime.now().year
+    calculated_age = current_year - current_user.birth_year
+
     existing_metadata = db.query(models.UserMetadata).filter(
         models.UserMetadata.diagnosis_id == None, 
         models.UserMetadata.gender == current_user.gender
     ).first()
     
     if existing_metadata:
-        # 기존 임시 데이터가 있다면 업데이트
         existing_metadata.smoke = smoke
         existing_metadata.drink = drink
         existing_metadata.pesticide = pesticide
         existing_metadata.skin_cancer_history = skin_cancer_history
         existing_metadata.cancer_history = cancer_history
         existing_metadata.fitspatrick = fitspatrick
-        new_metadata = existing_metadata
+        existing_metadata.age = calculated_age  
     else:
         # 없다면 새로 한 줄 생성
         new_metadata = models.UserMetadata(
             diagnosis_id=None,
-            age=0, 
+            age=calculated_age,  
             gender=getattr(current_user, "gender", "MALE"),
             region="FACE",
             smoke=smoke,
@@ -259,6 +263,61 @@ async def save_basic_metadata(
         raise HTTPException(status_code=500, detail=f"저장 실패: {str(e)}")
         
     return {"message": "기본 정보 저장 완료"}
+
+# 기초 메타데이터 수정 
+@app.patch("/user/metadata/basic", status_code=status.HTTP_200_OK)
+async def update_basic_metadata(
+    smoke: bool = None,
+    drink: bool = None,
+    pesticide: bool = None,
+    skin_cancer_history: bool = None,
+    cancer_history: bool = None,
+    fitspatrick: str = None,
+    
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 수정할 기존 기본 정보 찾기
+    existing_metadata = db.query(models.UserMetadata).filter(
+        models.UserMetadata.diagnosis_id == None, 
+        models.UserMetadata.gender == current_user.gender
+    ).first()
+    
+    # 만약 기초 정보가 아예 없다면 에러 반환
+    if not existing_metadata:
+        raise HTTPException(status_code=404, detail="수정할 기본 정보가 존재하지 않습니다. 먼저 등록해주세요.")
+
+    if smoke is not None: existing_metadata.smoke = smoke
+    if drink is not None: existing_metadata.drink = drink
+    if pesticide is not None: existing_metadata.pesticide = pesticide
+    if skin_cancer_history is not None: existing_metadata.skin_cancer_history = skin_cancer_history
+    if cancer_history is not None: existing_metadata.cancer_history = cancer_history
+    if fitspatrick is not None: existing_metadata.fitspatrick = fitspatrick
+
+    from datetime import datetime
+    current_year = datetime.now().year
+    existing_metadata.age = current_year - current_user.birth_year
+
+    try:
+        db.commit()
+        db.refresh(existing_metadata)
+    except Exception as e:
+        db.rollback()
+        logger.exception("기본 정보 수정 중 에러 발생")
+        raise HTTPException(status_code=500, detail=f"수정 실패: {str(e)}")
+        
+    return {
+        "message": "기본 정보가 성공적으로 수정되었습니다.",
+        "updated_data": {
+            "smoke": existing_metadata.smoke,
+            "drink": existing_metadata.drink,
+            "pesticide": existing_metadata.pesticide,
+            "skin_cancer_history": existing_metadata.skin_cancer_history,
+            "cancer_history": existing_metadata.cancer_history,
+            "fitspatrick": existing_metadata.fitspatrick,
+            "age": existing_metadata.age
+        }
+    }
 
 # 이미지 업로드
 @app.post("/upload-skin-image", status_code=status.HTTP_201_CREATED)
