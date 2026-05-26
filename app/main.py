@@ -457,8 +457,8 @@ async def upload_skin_and_diagnose(
         ai_result = response.json()
         
         # DB에 분석 결과 업데이트
-        new_diagnosis.result_class = ai_result.get("predicted_class")
-        new_diagnosis.result_prob = ai_result.get("probability")
+        new_diagnosis.result_class = ai_result.get("prediction")
+        new_diagnosis.result_prob = ai_result.get("confidence")
         db.commit()
 
         return {
