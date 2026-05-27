@@ -16,6 +16,8 @@ import os
 from uuid import uuid4
 import requests
 from datetime import datetime
+from typing import Optional
+from fastapi import Query
 
 
 # FastAPI 인스턴스 생성
@@ -212,12 +214,12 @@ def update_my_info(
 # 회원 가입 시 받는 메타데이터
 @app.post("/user/metadata/basic", status_code=status.HTTP_201_CREATED)
 async def save_basic_metadata(
-    smoke: bool = False,
-    drink: bool = False,
-    pesticide: bool = False,
-    skin_cancer_history: bool = False,
-    cancer_history: bool = False,
-    fitspatrick: str = "1",
+    smoke: Optional[bool] = Query(None),
+    drink: Optional[bool] = Query(None),
+    pesticide: Optional[bool] = Query(None),
+    skin_cancer_history: Optional[bool] = Query(None),
+    cancer_history: Optional[bool] = Query(None),
+    fitspatrick: str = Query(default="0"),
     
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
@@ -303,7 +305,7 @@ async def update_basic_metadata(
     pesticide: bool = None,
     skin_cancer_history: bool = None,
     cancer_history: bool = None,
-    fitspatrick: str = None,
+    fitspatrick: str = 0,
     
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
