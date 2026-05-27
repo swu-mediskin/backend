@@ -264,6 +264,37 @@ async def save_basic_metadata(
         
     return {"message": "기본 정보 저장 완료"}
 
+# 기초 메타데이터 조회
+@app.get("/user/metadata/basic", status_code=status.HTTP_200_OK)
+async def get_basic_metadata(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    existing_metadata = db.query(models.UserMetadata).filter(
+        models.UserMetadata.diagnosis_id == None, 
+        models.UserMetadata.gender == current_user.gender
+    ).first()
+    
+    if not existing_metadata:
+        raise HTTPException(
+            status_code=404, 
+            detail="등록된 기본 정보가 없습니다. 최초 설문을 먼저 진행해주세요."
+        )
+
+    from datetime import datetime
+    current_year = datetime.now().year
+    calculated_age = current_year - current_user.birth_year
+
+    return {
+        "smoke": existing_metadata.smoke,
+        "drink": existing_metadata.drink,
+        "pesticide": existing_metadata.pesticide,
+        "skin_cancer_history": existing_metadata.skin_cancer_history,
+        "cancer_history": existing_metadata.cancer_history,
+        "fitspatrick": existing_metadata.fitspatrick,
+        "age": calculated_age
+    }
+
 # 기초 메타데이터 수정 
 @app.patch("/user/metadata/basic", status_code=status.HTTP_200_OK)
 async def update_basic_metadata(
