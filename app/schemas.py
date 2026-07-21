@@ -44,3 +44,37 @@ class UserUpdate(BaseModel):
     birth_year: Optional[int] = Field(None, description="수정할 출생 연도", example=2003)
     gender: Optional[str] = Field(None, description="수정할 성별", pattern="^(M|F)$", example="F")
     password: Optional[str] = Field(None, description="수정할 비밀번호", example="newpassword123")
+
+class ExtractedMedicalData(BaseModel):
+    age: Optional[int] = Field(None, description="환자의 나이 (숫자만 추출)")
+    gender: Optional[str] = Field(None, description="환자의 성별. MALE, FEMALE, UNKNOWN 중 하나로 정규화")
+    region: Optional[str] = Field(None, description="피부 병변이 발생한 신체 부위")
+    smoke: Optional[bool] = Field(None, description="흡연 여부")
+    drink: Optional[bool] = Field(None, description="음주 여부")
+    itch: Optional[bool] = Field(None, description="가려움 여부")
+    pain: Optional[bool] = Field(None, description="통증 여부")
+    growth: Optional[bool] = Field(None, description="병변이 커졌는지 여부")
+    clinical_prompt: str = Field(
+        ..., 
+        description="BioMedCLIP 모델 입력용 영문 임상 문장. 없는 정보나 false인 증상은 문장에 절대 포함 금지."
+    )
+
+class NaturalLanguageRequest(BaseModel):
+    description_text: str
+
+class ExtractedMedicalData(BaseModel):
+    age: Optional[int] = Field(None, description="환자의 나이 (숫자만 추출)")
+    gender: Optional[str] = Field(None, description="환자의 성별. MALE, FEMALE, UNKNOWN 중 하나로 정규화")
+    region: Optional[str] = Field(None, description="피부 병변이 발생한 신체 부위")
+    smoke: Optional[bool] = Field(None, description="흡연 여부")
+    drink: Optional[bool] = Field(None, description="음주 여부")
+    itch: Optional[bool] = Field(None, description="가려움 여부")
+    pain: Optional[bool] = Field(None, description="통증 여부")
+    growth: Optional[bool] = Field(None, description="병변이 커졌는지 여부")
+    clinical_prompt: str = Field(
+        ..., 
+        description="BioMedCLIP 모델 입력용 영문 임상 문장. 없는 정보나 false인 증상은 문장에 절대 포함 금지."
+    )
+
+class NaturalLanguageRequest(BaseModel):
+    description_text: str

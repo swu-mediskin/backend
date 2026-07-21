@@ -18,7 +18,13 @@ import requests
 from datetime import datetime
 from typing import Optional
 from fastapi import Query
-
+import re
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+from app.schemas import NaturalLanguageRequest
+from app.service import extract_and_translate_via_gemini
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
@@ -501,3 +507,79 @@ async def upload_skin_and_diagnose(
         }
     except Exception as e:
         return {"error": "AI 서버 연결 실패", "details": str(e)}
+    
+# 자연어 메타데이터 추출
+# 1. 클라이언트가 보낼 자연어 데이터 스키마
+class NaturalLanguageInput(BaseModel):
+    text: str  # 예: "저는 25세 여성이고, 얼굴에 붉은 반점이 생겼어요. 흡연은 안 합니다."
+
+# 2. 추출된 메타데이터 결과를 담을 스키마
+class ExtractedMetadata(BaseModel):
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    region: Optional[str] = None
+    smoke: Optional[bool] = None
+    # 필요하면 drink, fitspatrick 등 추가 가능
+
+def parse_metadata_from_text(text: str) -> dict:
+    extracted = {
+        "age": None,
+        "gender": None,
+        "region": None,
+        "smoke": None
+    }
+    
+    # 1. 나이 추출 (예: 25세, 30대, 45살)
+    age_match = re.search(r'(\d+)(세|살|대)', text)
+    if age_match:
+        extracted["age"] = int(age_match.group(1))
+        
+    # 2. 성별 추출
+    if re.search(r'(여성|여자|여)', text):
+        extracted["gender"] = "FEMALE"
+    elif re.search(r'(남성|남자|남)', text):
+        extracted["gender"] = "MALE"
+        
+    # 3. 발생 부위 추출
+    region_match = re.search(r'(얼굴|팔|다리|등|배|가슴|목|손|발|두피)', text)
+    if region_match:
+        # DB에 저장하는 규격에 맞춰 영문으로 매핑해주면 더 좋아!
+        region_map = {"얼굴": "FACE", "팔": "ARM", "다리": "LEG", "등": "BACK"}
+        korean_region = region_match.group(1)
+        extracted["region"] = region_map.get(korean_region, korean_region)
+        
+    # 4. 흡연 여부 추출
+    if re.search(r'(비흡연|안 피|안피|금연)', text):
+        extracted["smoke"] = False
+    elif re.search(r'(흡연|담배|피웁)', text):
+        extracted["smoke"] = True
+        
+    return extracted
+
+@app.post("/api/extract-metadata", response_model=ExtractedMetadata)
+async def extract_metadata_api(input_data: NaturalLanguageInput):
+    try:
+        result = parse_metadata_from_text(input_data.text)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"데이터 추출 중 오류 발생: {str(e)}")
+
+@app.post("/diagnosis/process-text", status_code=status.HTTP_200_OK, tags=["Diagnosis"])
+async def process_user_natural_language(payload: NaturalLanguageRequest):
+    # 1. 서비스 레이어 호출 (제미나이를 통한 텍스트 분석 및 변환)
+    processed_result = extract_and_translate_via_gemini(payload.description_text)
+    
+    # 2. 필수 데이터 유효성 검증 (나이, 성별 가드 로직)
+    if processed_result.age is None or processed_result.gender == "UNKNOWN":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="입력된 내용에서 필수 정보(나이, 성별)를 추출할 수 없습니다. 더 자세히 입력해 주세요."
+        )
+
+    # 3. 결과 반환 (추후 DB 저장이나 BioMedCLIP 서버 전송 로직은 이 아래에 추가)
+    return {
+        "message": "제미나이 기반 메타데이터 추출 및 영문 프롬프트 변환 성공",
+        "original_text": payload.description_text,
+        "extracted_data": processed_result.model_dump()
+    }
