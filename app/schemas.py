@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import List, Literal, Optional
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -78,3 +78,38 @@ class ExtractedMedicalData(BaseModel):
 
 class NaturalLanguageRequest(BaseModel):
     description_text: str
+
+# 개별 대화 메시지 정의
+class ChatMessage(BaseModel):
+    role: Literal["user", "model"]  # 'user' = 환자, 'model' = AI
+    text: str  # 대화 내용
+
+    # 'assistant'로 보내도 Gemini 형식('model')으로 변환
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v):
+        return "model" if v == "assistant" else v
+
+# API 요청 스키마
+class DiagnosisRequest(BaseModel):
+    # 지금까지의 전체 대화를 배열로 받음 (환자 메시지로 시작하고 끝나야 함)
+    messages: List[ChatMessage] = Field(..., min_length=1)
+
+    # 입력 안 들어오면 기본값(null 또는 '미상') 자동 적용
+    age: Optional[int] = Field(default=None, description="환자 나이")
+    gender: Optional[str] = Field(default="미상", description="환자 성별 (M/F/미상)")
+
+    @field_validator("messages")
+    @classmethod
+    def starts_and_ends_with_user(cls, v):
+        if v[0].role != "user" or v[-1].role != "user":
+            raise ValueError("대화는 환자(user) 메시지로 시작하고 끝나야 합니다.")
+        return v
+
+# 채팅 응답 스키마 (Gemini 구조화 출력 형식으로도 사용)
+class ChatResponse(BaseModel):
+    reply: str = Field(..., description="환자에게 보여줄 AI의 한국어 답변")
+    is_complete: bool = Field(..., description="문진에 필요한 정보가 충분히 모였는지 여부")
+    extracted_data: Optional[ExtractedMedicalData] = Field(
+        None, description="is_complete가 true일 때만 채워지는 최종 분석 결과"
+    )

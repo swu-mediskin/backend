@@ -16,7 +16,7 @@ import os
 from uuid import uuid4
 import requests
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from fastapi import Query
 import re
 from fastapi import APIRouter
@@ -24,7 +24,8 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from app.schemas import NaturalLanguageRequest
-from app.service import extract_and_translate_via_gemini
+from app.service import extract_and_translate_via_gemini, chat_via_gemini
+from .schemas import DiagnosisRequest, ChatResponse
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
@@ -568,7 +569,7 @@ async def extract_metadata_api(input_data: NaturalLanguageInput):
 @app.post("/diagnosis/process-text", status_code=status.HTTP_200_OK, tags=["Diagnosis"])
 async def process_user_natural_language(payload: NaturalLanguageRequest):
     # 1. 서비스 레이어 호출 (제미나이를 통한 텍스트 분석 및 변환)
-    processed_result = extract_and_translate_via_gemini(payload.description_text)
+    processed_result = await extract_and_translate_via_gemini(payload.description_text)
     
     # 2. 필수 데이터 유효성 검증 (나이, 성별 가드 로직)
     if processed_result.age is None or processed_result.gender == "UNKNOWN":
@@ -583,3 +584,9 @@ async def process_user_natural_language(payload: NaturalLanguageRequest):
         "original_text": payload.description_text,
         "extracted_data": processed_result.model_dump()
     }
+
+@app.post("/api/diagnose", response_model=ChatResponse, tags=["Diagnosis"])
+async def diagnose_symptoms(request: DiagnosisRequest):
+    # 프론트가 지금까지의 전체 대화를 보내면, AI의 다음 답변을 돌려줌
+    # is_complete가 true가 되면 extracted_data에 최종 분석 결과가 담김
+    return await chat_via_gemini(request)
