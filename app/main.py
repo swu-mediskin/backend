@@ -24,8 +24,14 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from app.schemas import NaturalLanguageRequest
-from app.service import extract_and_translate_via_gemini, chat_via_gemini
-from .schemas import DiagnosisRequest, ChatResponse
+from app.service import (
+    extract_and_translate_via_gemini,
+    chat_via_gemini,
+    predict_via_ai_server,
+    format_prediction_message,
+    AI_SERVER_URL,
+)
+from .schemas import DiagnosisRequest, ChatResponse, DiagnosisResponse
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
@@ -396,6 +402,7 @@ async def upload_skin_image(
 
     return {
         "message": "이미지 업로드 성공",
+        "image_id": new_image.id,
         "file_path": file_path,
         "user_email": current_user.email
     }
@@ -486,7 +493,6 @@ async def upload_skin_and_diagnose(
 
     # AI 서버 호출 및 결과 받기
     try:
-        AI_SERVER_URL = "http://3.37.47.74:8080/predict" 
         with open(file_path, "rb") as f:
             response = requests.post(
                 AI_SERVER_URL, 
@@ -585,8 +591,23 @@ async def process_user_natural_language(payload: NaturalLanguageRequest):
         "extracted_data": processed_result.model_dump()
     }
 
-@app.post("/api/diagnose", response_model=ChatResponse, tags=["Diagnosis"])
-async def diagnose_symptoms(request: DiagnosisRequest):
+@app.post("/api/diagnose", response_model=DiagnosisResponse, tags=["Diagnosis"])
+async def diagnose_symptoms(request: DiagnosisRequest, db: Session = Depends(get_db)):
     # 프론트가 지금까지의 전체 대화를 보내면, AI의 다음 답변을 돌려줌
-    # is_complete가 true가 되면 extracted_data에 최종 분석 결과가 담김
-    return await chat_via_gemini(request)
+    # is_complete가 true가 되면 AI 서버(/predict)로 이미지 + 메타데이터를 보내
+    # 예측 클래스와 확률을 reply에 덧붙이고 prediction에 담아 대화를 종료함
+    image = db.query(models.SkinImage).filter(models.SkinImage.id == request.image_id).first()
+    if image is None:
+        raise HTTPException(status_code=404, detail="해당 이미지를 찾을 수 없습니다. 이미지를 먼저 업로드해 주세요.")
+
+    chat = await chat_via_gemini(request)
+    if not chat.is_complete or chat.extracted_data is None:
+        return DiagnosisResponse(**chat.model_dump())
+
+    prediction = await predict_via_ai_server(image.file_path, chat.extracted_data)
+    return DiagnosisResponse(
+        reply=f"{chat.reply}\n\n{format_prediction_message(prediction)}",
+        is_complete=True,
+        extracted_data=chat.extracted_data,
+        prediction=prediction,
+    )

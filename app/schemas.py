@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -48,7 +48,10 @@ class UserUpdate(BaseModel):
 class ExtractedMedicalData(BaseModel):
     age: Optional[int] = Field(None, description="환자의 나이 (숫자만 추출)")
     gender: Optional[str] = Field(None, description="환자의 성별. MALE, FEMALE, UNKNOWN 중 하나로 정규화")
-    region: Optional[str] = Field(None, description="피부 병변이 발생한 신체 부위")
+    region: Optional[str] = Field(
+        None,
+        description="피부 병변이 발생한 신체 부위. FACE, BACK, CHEST, NOSE, FOREARM, ARM, NECK, EAR, HAND, THIGH, ABDOMEN, LIP, FOOT, SCALP 중 가장 가까운 하나(영문 대문자)로 정규화",
+    )
     smoke: Optional[bool] = Field(None, description="흡연 여부")
     drink: Optional[bool] = Field(None, description="음주 여부")
     itch: Optional[bool] = Field(None, description="가려움 여부")
@@ -65,7 +68,10 @@ class NaturalLanguageRequest(BaseModel):
 class ExtractedMedicalData(BaseModel):
     age: Optional[int] = Field(None, description="환자의 나이 (숫자만 추출)")
     gender: Optional[str] = Field(None, description="환자의 성별. MALE, FEMALE, UNKNOWN 중 하나로 정규화")
-    region: Optional[str] = Field(None, description="피부 병변이 발생한 신체 부위")
+    region: Optional[str] = Field(
+        None,
+        description="피부 병변이 발생한 신체 부위. FACE, BACK, CHEST, NOSE, FOREARM, ARM, NECK, EAR, HAND, THIGH, ABDOMEN, LIP, FOOT, SCALP 중 가장 가까운 하나(영문 대문자)로 정규화",
+    )
     smoke: Optional[bool] = Field(None, description="흡연 여부")
     drink: Optional[bool] = Field(None, description="음주 여부")
     itch: Optional[bool] = Field(None, description="가려움 여부")
@@ -99,6 +105,9 @@ class DiagnosisRequest(BaseModel):
     age: Optional[int] = Field(default=None, description="환자 나이")
     gender: Optional[str] = Field(default="미상", description="환자 성별 (M/F/미상)")
 
+    # 문진 종료 시 AI 서버(/predict)에 함께 보낼 피부 사진 (/upload-skin-image 응답의 image_id)
+    image_id: int = Field(..., description="업로드한 피부 이미지 ID")
+
     @field_validator("messages")
     @classmethod
     def starts_and_ends_with_user(cls, v):
@@ -112,4 +121,17 @@ class ChatResponse(BaseModel):
     is_complete: bool = Field(..., description="문진에 필요한 정보가 충분히 모였는지 여부")
     extracted_data: Optional[ExtractedMedicalData] = Field(
         None, description="is_complete가 true일 때만 채워지는 최종 분석 결과"
+    )
+
+# AI 서버(/predict) 예측 결과
+class PredictionResult(BaseModel):
+    prediction: str = Field(..., description="예측 클래스 코드 (NEV/BCC/SCC/MEL)")
+    prediction_name: str = Field(..., description="예측 클래스 한국어 이름")
+    confidence: float = Field(..., description="예측 확률 (0~1)")
+    all_probabilities: Dict[str, float] = Field(..., description="클래스별 확률 (0~1)")
+
+# /api/diagnose 응답 (Gemini 응답 + 종료 시점의 AI 예측 결과)
+class DiagnosisResponse(ChatResponse):
+    prediction: Optional[PredictionResult] = Field(
+        None, description="is_complete가 true일 때만 채워지는 AI 서버 예측 결과"
     )

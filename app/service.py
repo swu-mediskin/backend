@@ -1,8 +1,23 @@
+import asyncio
+import os
+import requests
 from fastapi import HTTPException, status
 from google import genai
 from google.genai import types
 from app.schemas import ExtractedMedicalData
-from app.schemas import DiagnosisRequest, ChatResponse
+from app.schemas import DiagnosisRequest, ChatResponse, PredictionResult
+
+# AI 레포(swu-mediskin/ai) 예측 서버 주소
+AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://3.37.47.74:8080/predict")
+
+# AI 서버 class_names 순서와 동일해야 함 (['NEV', 'BCC', 'SCC', 'MEL'])
+AI_CLASS_NAMES = ["NEV", "BCC", "SCC", "MEL"]
+AI_CLASS_NAMES_KO = {
+    "NEV": "모반(점)",
+    "BCC": "기저세포암",
+    "SCC": "편평세포암",
+    "MEL": "흑색종",
+}
 
 client = genai.Client()
 
@@ -110,6 +125,7 @@ async def chat_via_gemini(request_data: DiagnosisRequest) -> ChatResponse:
     - 아직 모르는 정보가 있으면 is_complete는 false, extracted_data는 null로 두고 이어서 질문해.
     - 필요한 정보가 모두 모였거나, 환자가 더 이상 답하기 어렵다고 하거나 그만하고 싶어하면
       is_complete를 true로 하고 extracted_data를 채워. 이때 reply에는 수집한 내용을 짧게 요약해 안내해.
+      AI 이미지 분석 결과는 시스템이 reply 뒤에 덧붙이니, 결과를 추측하거나 언급하지 말고 요약 뒤 "이제 사진과 함께 분석해 볼게요." 정도로만 마무리해.
     - 확진이나 처방은 하지 마. 증상이 심각해 보이면(급격한 크기 증가, 출혈, 심한 통증 등) 병원 방문을 권유해.
 
     [extracted_data 작성 지침]
@@ -128,4 +144,62 @@ async def chat_via_gemini(request_data: DiagnosisRequest) -> ChatResponse:
         contents=contents,
         system_instruction=system_instruction,
         response_schema=ChatResponse,
+    )
+
+
+def _to_ai_bool(value) -> str:
+    """AI 서버 형식: 'true' / 'false' / 'unk'(모름)"""
+    if value is None:
+        return "unk"
+    return "true" if value else "false"
+
+
+def _call_ai_server(file_path: str, data: dict) -> dict:
+    with open(file_path, "rb") as f:
+        response = requests.post(
+            AI_SERVER_URL,
+            data=data,
+            files={"file": (os.path.basename(file_path), f)},
+            timeout=60,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+async def predict_via_ai_server(file_path: str, extracted: ExtractedMedicalData) -> PredictionResult:
+    """문진 종료 시 이미지 + 추출된 메타데이터로 AI 서버(/predict)를 호출해 클래스와 확률을 받아옴"""
+    data = {
+        "age": str(extracted.age or 0),
+        "gender": (extracted.gender or "unk").upper(),
+        "region": (extracted.region or "unk").upper(),
+        "itch": _to_ai_bool(extracted.itch),
+        "hurt": _to_ai_bool(extracted.pain),
+        "grew": _to_ai_bool(extracted.growth),
+        "smoke": _to_ai_bool(extracted.smoke),
+        "drink": _to_ai_bool(extracted.drink),
+    }
+
+    try:
+        result = await asyncio.to_thread(_call_ai_server, file_path, data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI 서버 예측 호출에 실패했습니다: {e}",
+        )
+
+    code = result["prediction"]
+    return PredictionResult(
+        prediction=code,
+        prediction_name=AI_CLASS_NAMES_KO.get(code, code),
+        confidence=result["confidence"],
+        all_probabilities=dict(zip(AI_CLASS_NAMES, result.get("all_probabilities", []))),
+    )
+
+
+def format_prediction_message(prediction: PredictionResult) -> str:
+    return (
+        f"사진과 말씀해 주신 내용을 함께 분석한 결과, "
+        f"가장 가능성이 높은 유형은 {prediction.prediction_name}({prediction.prediction})이며 "
+        f"확률은 {prediction.confidence * 100:.1f}%입니다. "
+        f"이 결과는 참고용이며 정확한 진단은 피부과 전문의에게 받아보시길 권해 드려요. 문진을 마칠게요."
     )
