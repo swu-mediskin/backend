@@ -32,9 +32,13 @@ from app.service import (
     AI_SERVER_URL,
 )
 from .schemas import DiagnosisRequest, ChatResponse, DiagnosisResponse
+from .chat.api import router as chat_router
 
 # FastAPI 인스턴스 생성
 app = FastAPI()
+
+# LangGraph 챗봇 세션 API (/chat/...)
+app.include_router(chat_router)
 
 # 이미지가 저장될 경로 설정
 UPLOAD_DIR = "static/uploads"
