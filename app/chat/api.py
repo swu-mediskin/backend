@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from langgraph.types import Command
@@ -5,51 +7,60 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
-from app.schemas import DiagnosisRequest, DiagnosisResponse
+from app.schemas import ChatRequest, ChatSessionResponse
 
-from .graph import INTAKE, RESULT, get_graph
+from .graph import get_graph
 from .info_answer import answer_question
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-def _config(image_id: int) -> dict:
-    return {"configurable": {"thread_id": f"image-{image_id}"}}
+def _config(session_id: str) -> dict:
+    return {"configurable": {"thread_id": session_id}}
 
 
-@router.post("", response_model=DiagnosisResponse)
-async def chat(request: DiagnosisRequest, db: Session = Depends(get_db)):
-    image = db.get(models.SkinImage, request.image_id)
-    if image is None:
-        raise HTTPException(status_code=404, detail="해당 이미지를 찾을 수 없습니다. 이미지를 먼저 업로드해 주세요.")
+@router.post("", response_model=ChatSessionResponse)
+async def chat(request: ChatRequest, db: Session = Depends(get_db)):
+    image = None
+    if request.image_id is not None:
+        image = db.get(models.SkinImage, request.image_id)
+        if image is None:
+            raise HTTPException(status_code=404, detail="해당 이미지를 찾을 수 없습니다. 이미지를 먼저 업로드해 주세요.")
 
     graph = await get_graph()
-    config = _config(request.image_id)
-    snapshot = await graph.aget_state(config)
+    analyzed_before = False   # 이번 요청 전에 이미 분석이 끝났는지
 
-    if not snapshot.values:
-        await graph.ainvoke(
-            {
-                "image_id": image.id,
-                "image_path": image.file_path,
-                "age": request.age,
-                "gender": request.gender,
-                "phase": INTAKE,
-            },
-            config,
-        )
+    if request.session_id:
+        session_id = request.session_id
+        config = _config(session_id)
         snapshot = await graph.aget_state(config)
+        if not snapshot.values:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+        analyzed_before = snapshot.values.get("prediction") is not None
+    else:
+        # 첫 요청: 새 세션을 만들고 사용자 입력 대기 상태까지 실행
+        session_id = uuid4().hex
+        config = _config(session_id)
+        await graph.ainvoke({"age": request.age, "gender": request.gender}, config)
 
     # 전체 대화 중 마지막 user 메시지만 그래프에 전달 (프론트와의 용이한 연결을 위함)
-    before = len(snapshot.values.get("messages", []))
-    values = await graph.ainvoke(Command(resume=request.messages[-1].text), config)
+    values = await graph.ainvoke(
+        Command(resume={
+            "text": request.messages[-1].text,
+            "image_id": image.id if image else None,
+            "image_path": image.file_path if image else None,
+        }),
+        config,
+    )
 
-    new_replies = [m["text"] for m in values["messages"][before + 1:] if m["role"] == "model"]
-    return DiagnosisResponse(
-        reply="\n\n".join(new_replies),
-        is_complete=values.get("phase") == RESULT,
-        extracted_data=values.get("extracted_data"),
-        prediction=values.get("prediction"),
+    just_completed = not analyzed_before and values.get("prediction") is not None
+
+    return ChatSessionResponse(
+        session_id=session_id,
+        reply=values["__interrupt__"][0].value["reply"],
+        is_complete=just_completed,
+        extracted_data=values.get("extracted_data") if just_completed else None,
+        prediction=values.get("prediction") if just_completed else None,
     )
 
 

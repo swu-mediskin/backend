@@ -8,23 +8,21 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import START, StateGraph
 from langgraph.types import interrupt
 
-from app.schemas import ChatMessage, DiagnosisRequest
-from app.service import chat_via_gemini, format_prediction_message, predict_via_ai_server
-
-from .info_answer import generate_info_answer
+from .info_answer import classify_intent, generate_info_answer
+from .intake_graph import intake_graph
 from .tools import search_info as run_search_info
 
-INTAKE = "INTAKE"   # 문진 중
-RESULT = "RESULT"   # 분석 완료
+NEW_SESSION_MESSAGE = "이 상담은 분석이 끝났어요. 다른 사진 분석은 새 상담에서 진행해 주세요."
 
 
 class ChatState(TypedDict, total=False):
-    image_id: int   # image_id = 대화 구분값
-    image_path: str
+    image_id: Optional[int]
+    image_path: Optional[str]
+    image_sent: bool            # 이번 요청에 사진이 함께 왔는지
     age: Optional[int]
     gender: str
     messages: Annotated[list[dict], operator.add]
-    phase: str
+    intent: str                 # router가 고른 의도 (info / intake)
     extracted_data: Optional[dict]
     prediction: Optional[dict]
     tool_trace: list[dict]      # 이번 턴의 툴 호출·결과
@@ -33,28 +31,42 @@ class ChatState(TypedDict, total=False):
 
 # ======= 노드 ===================================
 def user_input(state: ChatState) -> dict:
-    text = interrupt({"phase": state.get("phase", INTAKE)})
-    return {"messages": [{"role": "user", "text": text}]}
+    messages = state.get("messages", [])
+    value = interrupt({"reply": messages[-1]["text"] if messages else ""})
+
+    update = {"messages": [{"role": "user", "text": value["text"]}], "image_sent": bool(value.get("image_id"))}
+    
+    if value.get("image_id") and not state.get("prediction"):
+        update["image_id"] = value["image_id"]
+        update["image_path"] = value["image_path"]
+    return update
+
+
+async def router(state: ChatState) -> dict:
+    if state.get("prediction") and state.get("image_sent"):
+        return {"intent": "intake"}
+    return {"intent": await classify_intent(state["messages"])}
 
 
 async def analyze(state: ChatState) -> dict:
-    request = DiagnosisRequest(
-        messages=[ChatMessage(role=m["role"], text=m["text"]) for m in state["messages"]],
-        age=state.get("age"),
-        gender=state.get("gender") or "미상",
-        image_id=state["image_id"],
-    )
+    """문진 서브그래프 실행. 사용자와 여러 턴 주고받지만 바깥에서는 노드 하나"""
+    if state.get("prediction"):
+        return {"messages": [{"role": "model", "text": NEW_SESSION_MESSAGE}]}
 
-    chat = await chat_via_gemini(request)
-    if not chat.is_complete or chat.extracted_data is None:
-        return {"messages": [{"role": "model", "text": chat.reply}]}
-
-    prediction = await predict_via_ai_server(state["image_path"], chat.extracted_data)
+    out = await intake_graph.ainvoke({
+        "intake": [{"role": "user", "text": state["messages"][-1]["text"]}],
+        "image_id": state.get("image_id"),
+        "image_path": state.get("image_path"),
+        "age": state.get("age"),
+        "gender": state.get("gender"),
+    })
+    
     return {
-        "messages": [{"role": "model", "text": f"{chat.reply}\n\n{format_prediction_message(prediction)}"}],
-        "phase": RESULT,
-        "extracted_data": chat.extracted_data.model_dump(),
-        "prediction": prediction.model_dump(),
+        "messages": out["intake"][1:] + [{"role": "model", "text": out["reply"]}],
+        "image_id": out["image_id"],
+        "image_path": out["image_path"],
+        "extracted_data": out["extracted_data"],
+        "prediction": out["prediction"],
     }
 
 
@@ -76,9 +88,8 @@ def search_info(state: ChatState) -> dict:
 
 
 # ======= 라우팅 ===================================
-def route_after_input(state: ChatState) -> str:
-    # 분석 전에는 문진(analyze), 분석 후에는 정보 답변(info_answer)
-    return "info_answer" if state.get("phase") == RESULT else "analyze"
+def route_after_router(state: ChatState) -> str:
+    return "info_answer" if state["intent"] == "info" else "analyze"
 
 
 def route_after_info_answer(state: ChatState) -> str:
@@ -88,12 +99,14 @@ def route_after_info_answer(state: ChatState) -> str:
 def build_graph() -> StateGraph:
     g = StateGraph(ChatState)
     g.add_node("user_input", user_input)
+    g.add_node("router", router)
     g.add_node("analyze", analyze)
     g.add_node("info_answer", info_answer)
     g.add_node("search_info", search_info)
 
     g.add_edge(START, "user_input")
-    g.add_conditional_edges("user_input", route_after_input, ["analyze", "info_answer"])
+    g.add_edge("user_input", "router")
+    g.add_conditional_edges("router", route_after_router, ["info_answer", "analyze"])
     g.add_edge("analyze", "user_input")
     g.add_conditional_edges("info_answer", route_after_info_answer, ["search_info", "user_input"])
     g.add_edge("search_info", "info_answer")

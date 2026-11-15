@@ -23,11 +23,45 @@ INFO_ANSWER_PROMPT = """
 """
 
 
+CLASSIFY_PROMPT = """
+피부 상담 챗봇에 들어온 사용자의 마지막 메시지가 어떤 의도인지 하나만 고릅니다.
+- info: 피부질환(모반, 피부암 등)에 대한 일반적인 궁금증 (예: "흑색종이 뭐예요?", "기저세포암은 전이돼요?")
+- intake: 자기 피부 상태를 설명하거나 상담·분석을 원함 (예: "발바닥 점이 커졌어요", "제 사진 봐주세요")
+인사처럼 애매한 메시지는 info로 고릅니다.
+"""
+
+
+def _to_contents(messages: list[dict]) -> list[types.Content]:
+    return [types.Content(role=m["role"], parts=[types.Part(text=m["text"])]) for m in messages]
+
+
+async def _generate(contents, config):
+    last_error = None
+    for model_name in CANDIDATE_MODELS:
+        try:
+            return await client.aio.models.generate_content(model=model_name, contents=contents, config=config)
+        except Exception as e:
+            last_error = e
+    raise last_error
+
+
+async def classify_intent(messages: list[dict]) -> str:
+    """마지막 메시지가 정보 질문(info)인지 상담·분석 요청(intake)인지 분류"""
+    config = types.GenerateContentConfig(
+        system_instruction=CLASSIFY_PROMPT,
+        response_mime_type="text/x.enum",
+        response_schema={"type": "STRING", "enum": ["info", "intake"]},
+        temperature=0,
+    )
+    response = await _generate(_to_contents(messages), config)
+    return response.text.strip()
+
+
 async def generate_info_answer(messages: list[dict], tool_trace: list[dict]):
     """
     반환: (model 응답 Content dict, 툴 호출 목록, 최종 답변 텍스트)
     """
-    contents = [types.Content(role=m["role"], parts=[types.Part(text=m["text"])]) for m in messages]
+    contents = _to_contents(messages)
     contents += [types.Content.model_validate_json(json.dumps(c)) for c in tool_trace]
 
     config = types.GenerateContentConfig(
@@ -36,16 +70,7 @@ async def generate_info_answer(messages: list[dict], tool_trace: list[dict]):
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0.3,
     )
-
-    last_error = None
-    for model_name in CANDIDATE_MODELS:
-        try:
-            response = await client.aio.models.generate_content(model=model_name, contents=contents, config=config)
-            break
-        except Exception as e:
-            last_error = e
-    else:
-        raise last_error
+    response = await _generate(contents, config)
 
     content = response.candidates[0].content.model_dump(mode="json", exclude_none=True)
     calls = [{"name": fc.name, "args": dict(fc.args or {})} for fc in (response.function_calls or [])]
