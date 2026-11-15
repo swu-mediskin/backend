@@ -28,7 +28,6 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="해당 이미지를 찾을 수 없습니다. 이미지를 먼저 업로드해 주세요.")
 
     graph = await get_graph()
-    analyzed_before = False   # 이번 요청 전에 이미 분석이 끝났는지
 
     if request.session_id:
         session_id = request.session_id
@@ -36,7 +35,6 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         snapshot = await graph.aget_state(config)
         if not snapshot.values:
             raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
-        analyzed_before = snapshot.values.get("prediction") is not None
     else:
         # 첫 요청: 새 세션을 만들고 사용자 입력 대기 상태까지 실행
         session_id = uuid4().hex
@@ -53,14 +51,16 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         config,
     )
 
-    just_completed = not analyzed_before and values.get("prediction") is not None
+    # 마지막 메시지 = 이번 요청에서 사용자에게 보낸 답. 분석이 끝난 요청이면 결과 메시지
+    last = values["messages"][-1]
+    result = last if last.get("prediction") else None
 
     return ChatSessionResponse(
         session_id=session_id,
         reply=values["__interrupt__"][0].value["reply"],
-        is_complete=just_completed,
-        extracted_data=values.get("extracted_data") if just_completed else None,
-        prediction=values.get("prediction") if just_completed else None,
+        is_complete=result is not None,
+        extracted_data=result["extracted_data"] if result else None,
+        prediction=result["prediction"] if result else None,
     )
 
 
@@ -82,9 +82,7 @@ async def get_session(session_id: str):
         "session_id": session_id,
         "messages": values.get("messages", []),
         "intake_in_progress": intake_in_progress,
-        "image_id": values.get("image_id"),
-        "extracted_data": values.get("extracted_data"),
-        "prediction": values.get("prediction"),
+        "image_id": values.get("image_id"),   # 다음 문진에 쓸 사진 (분석 결과의 사진은 결과 메시지에 있음)
     }
 
 

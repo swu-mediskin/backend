@@ -13,22 +13,17 @@ from .info_answer import classify_intent, generate_info_answer
 from .intake_graph import intake_graph
 from .tools import search_info as run_search_info
 
-NEW_SESSION_MESSAGE = "이 상담은 분석이 끝났어요. 다른 사진 분석은 새 상담에서 진행해 주세요."
-
 # 개발 로그 (uvicorn 로그에 함께 출력: docker logs -f mediskin_backend)
 logger = logging.getLogger("uvicorn.error")
 
 
 class ChatState(TypedDict, total=False):
-    image_id: Optional[int]
+    image_id: Optional[int]     # 다음 문진에 쓸 사진 (분석이 끝나면 비움)
     image_path: Optional[str]
-    image_sent: bool            # 이번 요청에 사진이 함께 왔는지
     age: Optional[int]
     gender: str
-    messages: Annotated[list[dict], operator.add]
+    messages: Annotated[list[dict], operator.add]   # 분석 결과는 결과 메시지에 image_id·extracted_data·prediction으로 붙음
     intent: str                 # router가 고른 의도 (info / intake)
-    extracted_data: Optional[dict]
-    prediction: Optional[dict]
     tool_trace: list[dict]      # 이번 턴의 툴 호출·결과
     pending_calls: list[dict]   # info_answer가 요청한 툴 호출
 
@@ -38,28 +33,21 @@ def user_input(state: ChatState) -> dict:
     messages = state.get("messages", [])
     value = interrupt({"reply": messages[-1]["text"] if messages else ""})
 
-    update = {"messages": [{"role": "user", "text": value["text"]}], "image_sent": bool(value.get("image_id"))}
-    
-    if value.get("image_id") and not state.get("prediction"):
-        update["image_id"] = value["image_id"]
-        update["image_path"] = value["image_path"]
-    return update
+    return {
+        "messages": [{"role": "user", "text": value["text"]}],
+        "image_id": value.get("image_id"),
+        "image_path": value.get("image_path"),
+    }
 
 
 async def router(state: ChatState) -> dict:
-    if state.get("prediction") and state.get("image_sent"):
-        intent = "intake"
-    else:
-        intent = await classify_intent(state["messages"])
+    intent = await classify_intent(state["messages"])
     logger.info("[chat] router → %s", intent)
     return {"intent": intent}
 
 
 async def analyze(state: ChatState) -> dict:
     """문진 서브그래프 실행. 사용자와 여러 턴 주고받지만 바깥에서는 노드 하나"""
-    if state.get("prediction"):
-        return {"messages": [{"role": "model", "text": NEW_SESSION_MESSAGE}]}
-
     out = await intake_graph.ainvoke({
         "intake": [{"role": "user", "text": state["messages"][-1]["text"]}],
         "image_id": state.get("image_id"),
@@ -68,12 +56,17 @@ async def analyze(state: ChatState) -> dict:
         "gender": state.get("gender"),
     })
     
-    return {
-        "messages": out["intake"][1:] + [{"role": "model", "text": out["reply"], "prediction": out["prediction"]}],
+    result_message = {
+        "role": "model",
+        "text": out["reply"],
         "image_id": out["image_id"],
-        "image_path": out["image_path"],
         "extracted_data": out["extracted_data"],
         "prediction": out["prediction"],
+    }
+    return {
+        "messages": out["intake"][1:] + [result_message],
+        "image_id": None,
+        "image_path": None,
     }
 
 
