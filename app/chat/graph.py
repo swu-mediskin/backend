@@ -69,7 +69,7 @@ async def analyze(state: ChatState) -> dict:
     })
     
     return {
-        "messages": out["intake"][1:] + [{"role": "model", "text": out["reply"]}],
+        "messages": out["intake"][1:] + [{"role": "model", "text": out["reply"], "prediction": out["prediction"]}],
         "image_id": out["image_id"],
         "image_path": out["image_path"],
         "extracted_data": out["extracted_data"],

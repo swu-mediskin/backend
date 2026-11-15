@@ -31,8 +31,23 @@ CLASSIFY_PROMPT = """
 """
 
 
+def _format_prediction(prediction: dict) -> str:
+    probs = sorted(prediction["all_probabilities"].items(), key=lambda kv: kv[1], reverse=True)
+    return (
+        f"[AI 분석 결과] 1순위: {prediction['prediction_name']}({prediction['prediction']}) / 전체 확률: "
+        + ", ".join(f"{code} {p * 100:.1f}%" for code, p in probs)
+    )
+
+
 def _to_contents(messages: list[dict]) -> list[types.Content]:
-    return [types.Content(role=m["role"], parts=[types.Part(text=m["text"])]) for m in messages]
+    contents = []
+    for m in messages:
+        text = m["text"]
+        # 분석 결과 메시지에는 확률 전체를 덧붙여 모델에 전달 (사용자에게 보이는 문장은 그대로)
+        if m.get("prediction"):
+            text += "\n\n" + _format_prediction(m["prediction"])
+        contents.append(types.Content(role=m["role"], parts=[types.Part(text=text)]))
+    return contents
 
 
 async def _generate(contents, config):

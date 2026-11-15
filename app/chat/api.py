@@ -64,6 +64,30 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     )
 
 
+# chat 세션에 저장된 대화와 분석 결과 조회
+@router.get("/{session_id}")
+async def get_session(session_id: str):
+    graph = await get_graph()
+    snapshot = await graph.aget_state(_config(session_id), subgraphs=True)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
+    intake_in_progress = []
+    for task in snapshot.tasks:
+        if task.name == "analyze" and hasattr(task.state, "values"):
+            intake_in_progress = task.state.values.get("intake", [])[1:]  # [0]은 messages에 이미 있음
+
+    values = snapshot.values
+    return {
+        "session_id": session_id,
+        "messages": values.get("messages", []),
+        "intake_in_progress": intake_in_progress,
+        "image_id": values.get("image_id"),
+        "extracted_data": values.get("extracted_data"),
+        "prediction": values.get("prediction"),
+    }
+
+
 class InfoTestRequest(BaseModel):
     question: str
 
