@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from langgraph.types import Command
 from sqlalchemy.orm import Session
 
@@ -7,6 +8,7 @@ from app.database import get_db
 from app.schemas import DiagnosisRequest, DiagnosisResponse
 
 from .graph import INTAKE, RESULT, get_graph
+from .info_answer import answer_question
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -38,9 +40,6 @@ async def chat(request: DiagnosisRequest, db: Session = Depends(get_db)):
         )
         snapshot = await graph.aget_state(config)
 
-    if snapshot.values.get("phase") == RESULT:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="분석이 완료된 상담입니다.")
-
     # 전체 대화 중 마지막 user 메시지만 그래프에 전달 (프론트와의 용이한 연결을 위함)
     before = len(snapshot.values.get("messages", []))
     values = await graph.ainvoke(Command(resume=request.messages[-1].text), config)
@@ -52,3 +51,13 @@ async def chat(request: DiagnosisRequest, db: Session = Depends(get_db)):
         extracted_data=values.get("extracted_data"),
         prediction=values.get("prediction"),
     )
+
+
+class InfoTestRequest(BaseModel):
+    question: str
+
+
+# 테스트용: 정보 답변 로직(info_answer ⇄ search_info)만 실행. 분석·대화 저장 없음
+@router.post("/info-test")
+async def info_test(req: InfoTestRequest):
+    return await answer_question(req.question)
