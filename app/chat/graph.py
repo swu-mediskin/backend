@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import operator
 import os
 from typing import Annotated, Optional, TypedDict
@@ -13,6 +14,9 @@ from .intake_graph import intake_graph
 from .tools import search_info as run_search_info
 
 NEW_SESSION_MESSAGE = "이 상담은 분석이 끝났어요. 다른 사진 분석은 새 상담에서 진행해 주세요."
+
+# 개발 로그 (uvicorn 로그에 함께 출력: docker logs -f mediskin_backend)
+logger = logging.getLogger("uvicorn.error")
 
 
 class ChatState(TypedDict, total=False):
@@ -44,8 +48,11 @@ def user_input(state: ChatState) -> dict:
 
 async def router(state: ChatState) -> dict:
     if state.get("prediction") and state.get("image_sent"):
-        return {"intent": "intake"}
-    return {"intent": await classify_intent(state["messages"])}
+        intent = "intake"
+    else:
+        intent = await classify_intent(state["messages"])
+    logger.info("[chat] router → %s", intent)
+    return {"intent": intent}
 
 
 async def analyze(state: ChatState) -> dict:
@@ -74,16 +81,19 @@ async def info_answer(state: ChatState) -> dict:
     """정보 질문에 답변. 정보가 필요하면 search_info 툴 호출을 요청 (분석 결과와 무관)"""
     content, calls, text = await generate_info_answer(state["messages"], state.get("tool_trace", []))
     if calls:
+        logger.info("[chat] info_answer → 툴 요청 %s", [f'{c["name"]}({c["args"]})' for c in calls])
         return {"tool_trace": state.get("tool_trace", []) + [content], "pending_calls": calls}
+    logger.info("[chat] info_answer → 답변 완료")
     return {"messages": [{"role": "model", "text": text}], "tool_trace": [], "pending_calls": []}
 
 
 def search_info(state: ChatState) -> dict:
     """info_answer가 요청한 search_info 호출을 실행하고 결과를 tool_trace에 추가"""
-    parts = [
-        {"function_response": {"name": c["name"], "response": run_search_info(**c["args"])}}
-        for c in state["pending_calls"]
-    ]
+    parts = []
+    for c in state["pending_calls"]:
+        result = run_search_info(**c["args"])
+        logger.info("[chat] search_info(%s) → found=%s", c["args"], result["found"])
+        parts.append({"function_response": {"name": c["name"], "response": result}})
     return {"tool_trace": state["tool_trace"] + [{"role": "user", "parts": parts}], "pending_calls": []}
 
 
