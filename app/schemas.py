@@ -135,3 +135,12 @@ class DiagnosisResponse(ChatResponse):
     prediction: Optional[PredictionResult] = Field(
         None, description="is_complete가 true일 때만 채워지는 AI 서버 예측 결과"
     )
+
+# /chat 요청: 사진 없이 시작 가능, 두 번째 요청부터 session_id를 보냄
+class ChatRequest(DiagnosisRequest):
+    image_id: Optional[int] = Field(default=None, description="업로드한 피부 이미지 ID (문진 시작 전까지 선택)")
+    session_id: Optional[str] = Field(default=None, description="대화 세션 ID (첫 요청은 비움)")
+
+# /chat 응답
+class ChatSessionResponse(DiagnosisResponse):
+    session_id: str = Field(..., description="대화 세션 ID (다음 요청에 그대로 보냄)")
